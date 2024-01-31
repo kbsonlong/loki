@@ -18,6 +18,7 @@ import (
 )
 
 // PushHandler reads a snappy-compressed proto from the HTTP body.
+// 从请求头`X-Scope-OrgID`中解析租户信息
 func (d *Distributor) PushHandler(w http.ResponseWriter, r *http.Request) {
 	logger := util_log.WithContext(r.Context(), util_log.Logger)
 	tenantID, err := tenant.TenantID(r.Context())

@@ -33,6 +33,7 @@ func main() {
 		fmt.Println(version.Print("loki"))
 		os.Exit(0)
 	}
+	// 解析配置并解析命令行参数
 	if err := cfg.DynamicUnmarshal(&config, os.Args[1:], flag.CommandLine); err != nil {
 		fmt.Fprintf(os.Stderr, "failed parsing config: %v\n", err)
 		os.Exit(1)
@@ -48,6 +49,7 @@ func main() {
 		level.Error(util_log.Logger).Log("msg", "invalid log level")
 		exit(1)
 	}
+	// 初始化全局logger
 	util_log.InitLogger(&config.Server, prometheus.DefaultRegisterer, config.UseBufferedLogger, config.UseSyncLogger)
 
 	// Validate the config once both the config file has been loaded
@@ -69,11 +71,13 @@ func main() {
 		}
 	}
 
+	// 验证配置
 	if config.VerifyConfig {
 		level.Info(util_log.Logger).Log("msg", "config is valid")
 		exit(0)
 	}
 
+	// 是否开启traceing
 	if config.Tracing.Enabled {
 		// Setting the environment variable JAEGER_AGENT_HOST enables tracing
 		trace, err := tracing.NewFromEnv(fmt.Sprintf("loki-%s", config.Target))
@@ -97,6 +101,7 @@ func main() {
 	runtime.KeepAlive(ballast)
 
 	// Start Loki
+	// 初始化Loki实例
 	t, err := loki.New(config.Config)
 	util_log.CheckFatal("initializing loki", err, util_log.Logger)
 
@@ -107,6 +112,7 @@ func main() {
 
 	level.Info(util_log.Logger).Log("msg", "Starting Loki", "version", version.Info())
 
+	// 启动loki
 	err = t.Run(loki.RunOpts{})
 	util_log.CheckFatal("running loki", err, util_log.Logger)
 }

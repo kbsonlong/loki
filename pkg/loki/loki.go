@@ -385,8 +385,10 @@ func New(cfg Config) (*Loki, error) {
 		deleteClientMetrics: deletion.NewDeleteRequestClientMetrics(prometheus.DefaultRegisterer),
 	}
 	analytics.Edition("oss")
+	// 授权中间件
 	loki.setupAuthMiddleware()
 	loki.setupGRPCRecoveryMiddleware()
+	// Loki模块管理器，注册一系列模块，每个模块有一个名字和初始化函数
 	if err := loki.setupModuleManager(); err != nil {
 		return nil, err
 	}
@@ -607,6 +609,8 @@ func (t *Loki) readyHandler(sm *services.Manager, shutdownRequested *atomic.Bool
 	}
 }
 
+// 核心方法，模块管理器
+// 包含模块名称、模块初始化方法和模块依赖关系
 func (t *Loki) setupModuleManager() error {
 	mm := modules.NewManager(util_log.Logger)
 
@@ -648,6 +652,7 @@ func (t *Loki) setupModuleManager() error {
 	mm.RegisterModule(Backend, nil)
 
 	// Add dependencies
+	// 模块依赖关系
 	deps := map[string][]string{
 		Ring:                     {RuntimeConfig, Server, MemberlistKV},
 		Analytics:                {},
@@ -676,6 +681,7 @@ func (t *Loki) setupModuleManager() error {
 		MemberlistKV:             {Server},
 	}
 
+	// 启用查询限流功能
 	if t.Cfg.Querier.PerRequestLimitsEnabled {
 		level.Debug(util_log.Logger).Log("msg", "per-query request limits support enabled")
 		mm.RegisterModule(QueryLimiter, t.initQueryLimiter, modules.UserInvisibleModule)
@@ -684,6 +690,7 @@ func (t *Loki) setupModuleManager() error {
 
 		// Ensure query limiter embeds overrides after they've been
 		// created.
+		// 设置QueryLimiter模块的依赖为Overrides
 		deps[QueryLimiter] = []string{Overrides}
 		deps[QueryLimitsInterceptors] = []string{}
 
