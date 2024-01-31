@@ -9,6 +9,7 @@ import (
 // Stream contains a unique labels set as a string and a set of entries for it.
 // We are not using the proto generated version but this custom one so that we
 // can improve serialization see benchmark.
+// Stream 流包含一个唯一的标签集，作为一个字符串，然后还包含一组日志条目
 type Stream struct {
 	Labels  string  `protobuf:"bytes,1,opt,name=labels,proto3" json:"labels"`
 	Entries []Entry `protobuf:"bytes,2,rep,name=entries,proto3,customtype=EntryAdapter" json:"entries"`
@@ -16,6 +17,7 @@ type Stream struct {
 }
 
 // Entry is a log entry with a timestamp.
+// Entry 是一个带有时间戳的日志条目
 type Entry struct {
 	Timestamp time.Time `protobuf:"bytes,1,opt,name=timestamp,proto3,stdtime" json:"ts"`
 	Line      string    `protobuf:"bytes,2,opt,name=line,proto3" json:"line"`

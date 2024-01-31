@@ -279,6 +279,7 @@ func (t *Loki) initTenantConfigs() (_ services.Service, err error) {
 
 func (t *Loki) initDistributor() (services.Service, error) {
 	var err error
+	// 实例化distributor
 	t.distributor, err = distributor.New(
 		t.Cfg.Distributor,
 		t.Cfg.IngesterClient,
@@ -293,6 +294,7 @@ func (t *Loki) initDistributor() (services.Service, error) {
 
 	// Register the distributor to receive Push requests over GRPC
 	// EXCEPT when running with `-target=all` or `-target=` contains `ingester`
+	// target不为all、write或者ingrster，那么就注册distributor到grpc中
 	if !t.Cfg.isModuleEnabled(All) && !t.Cfg.isModuleEnabled(Write) && !t.Cfg.isModuleEnabled(Ingester) {
 		logproto.RegisterPusherServer(t.Server.GRPC, t.distributor)
 	}
@@ -303,6 +305,7 @@ func (t *Loki) initDistributor() (services.Service, error) {
 		tenant.WithDefaultResolver(tenant.NewMultiResolver())
 	}
 
+	// 加载RecoveryHTTPMiddleware,HTTPAuthMiddleware中间件,其中HTTPAuthMiddleware负责解析租户ID
 	pushHandler := middleware.Merge(
 		serverutil.RecoveryHTTPMiddleware,
 		t.HTTPAuthMiddleware,

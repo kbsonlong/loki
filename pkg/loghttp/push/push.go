@@ -51,6 +51,12 @@ type TenantsRetention interface {
 	RetentionPeriodFor(userID string, lbs labels.Labels) time.Duration
 }
 
+// 1. 首先获取请求体的大小，并根据Content-Encoding（内容编码）选择不同的处理方式。
+// 2. 如果Content-Encoding为空，则直接使用请求体；
+// 3. 如果Content-Encoding为"snappy"，则使用loki_util.NewSizeReader函数解析请求体；
+// 4. 如果Content-Encoding为"gzip"，则使用gzip.NewReader函数解压缩请求体；
+// 5. 如果Content-Encoding为"deflate"，则使用flate.NewReader函数解压缩请求体；
+// 6. 如果Content-Encoding为其他值，则返回一个错误
 func ParseRequest(logger log.Logger, userID string, r *http.Request, tenantsRetention TenantsRetention) (*logproto.PushRequest, error) {
 	// Body
 	var body io.Reader
@@ -85,7 +91,8 @@ func ParseRequest(logger log.Logger, userID string, r *http.Request, tenantsRete
 		entriesSize      int64
 		streamLabelsSize int64
 		totalEntries     int64
-		req              logproto.PushRequest
+		// 定义请求体数据结构
+		req logproto.PushRequest
 	)
 
 	contentType, _ /* params */, err := mime.ParseMediaType(contentType)

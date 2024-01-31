@@ -262,6 +262,7 @@ type pushTracker struct {
 // Push a set of streams.
 // The returned error is the last one seen.
 func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*logproto.PushResponse, error) {
+	// 首先从上下文中获取租户ID，然后检查请求对象req是否为空，如果为空则直接返回一个空的响应对象
 	tenantID, err := tenant.TenantID(ctx)
 	if err != nil {
 		return nil, err
@@ -275,6 +276,8 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 	// First we flatten out the request into a list of samples.
 	// We use the heuristic of 1 sample per TS to size the array.
 	// We also work out the hash value at the same time.
+	// 将每个流数据转换为一个streamTracker对象，并计算出流数据的哈希值。
+	// 函数还会对流数据进行验证，如果验证失败则会记录相关信息并继续处理下一个流数据
 	streams := make([]streamTracker, 0, len(req.Streams))
 	keys := make([]uint32, 0, len(req.Streams))
 	validatedLineSize := 0
@@ -283,6 +286,7 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 	var validationErr error
 	validationContext := d.validator.getValidationContextForTime(time.Now(), tenantID)
 
+	// 遍历请求中的每一个Stream集
 	for _, stream := range req.Streams {
 		// Return early if stream does not contain any entries
 		if len(stream.Entries) == 0 {
@@ -292,6 +296,7 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 		// Truncate first so subsequent steps have consistent line lengths
 		d.truncateLines(validationContext, &stream)
 
+		// 解析Stream中的labels计算出流数据的哈希值
 		stream.Labels, stream.Hash, err = d.parseStreamLabels(validationContext, stream.Labels, &stream)
 		if err != nil {
 			validationErr = err
@@ -304,9 +309,11 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 			continue
 		}
 
+		// 将流数据进行分片，并将分片后的数据发送到不同的ingesters
 		n := 0
 		streamSize := 0
 		for _, entry := range stream.Entries {
+			// 校验一个日志实体Entry
 			if err := d.validator.ValidateEntry(validationContext, stream.Labels, entry); err != nil {
 				validationErr = err
 				continue
@@ -326,13 +333,16 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 				}
 			}
 
+			// 校验成功的样本大小和个数
 			n++
 			validatedLineSize += len(entry.Line)
 			validatedLineCount++
 			streamSize += len(entry.Line)
 		}
+		// 去掉校验失败的实体
 		stream.Entries = stream.Entries[:n]
 
+		// 为当前日志流生成用于hash换的token值
 		shardStreamsCfg := d.validator.Limits.ShardStreams(tenantID)
 		if shardStreamsCfg.Enabled {
 			derivedKeys, derivedStreams := d.shardStream(stream, streamSize, tenantID)
@@ -350,6 +360,7 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 	}
 
 	now := time.Now()
+	// 每个租户有一个限速器，判断可以正常传输的日志大小是否应该被限制，如果触发限制返回429响应
 	if !d.ingestionRateLimiter.AllowN(now, tenantID, validatedLineSize) {
 		// Return a 429 to indicate to the client they are being rate limited
 		validation.DiscardedSamples.WithLabelValues(validation.RateLimited, tenantID).Add(float64(validatedLineCount))
@@ -360,17 +371,24 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 	const maxExpectedReplicationSet = 5 // typical replication factor 3 plus one for inactive plus one for luck
 	var descs [maxExpectedReplicationSet]ring.InstanceDesc
 
+	// 根据ingesters的数量创建一个map，用于存储每个ingester对应的流数据
 	streamsByIngester := map[string][]*streamTracker{}
 	ingesterDescs := map[string]ring.InstanceDesc{}
 	for i, key := range keys {
+		// ReplicationSet 描述了一个指定的键与哪些 Ingesters 进行对话，以及可以容忍多少个错误
+		// 根据 label hash 到 hash 环上获取对应的 ingester 节点，一个节点可能有多个对等的 ingester 副本来做 HA
 		replicationSet, err := d.ingestersRing.Get(key, ring.WriteNoExtend, descs[:0], nil, nil)
 		if err != nil {
 			return nil, err
 		}
 
+		// 最小成功的实例树
 		streams[i].minSuccess = len(replicationSet.Instances) - replicationSet.MaxErrors
+		// 可容忍的最大故障实例数
 		streams[i].maxFailures = replicationSet.MaxErrors
+		// 将 Stream 按对应的 ingester 进行分组
 		for _, ingester := range replicationSet.Instances {
+			// 配置每个 ingester 副本对应的日志流数据
 			streamsByIngester[ingester.Addr] = append(streamsByIngester[ingester.Addr], &streams[i])
 			ingesterDescs[ingester.Addr] = ingester
 		}
@@ -381,7 +399,9 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 		err:  make(chan error, 1),
 	}
 	tracker.streamsPending.Store(int32(len(streams)))
+	// 根据配置信息和流数据的哈希值选择一个ingester，并将流数据发送到该ingester中
 	for ingester, streams := range streamsByIngester {
+		// 让ingester并行处理通过hash环对应的日志流列表
 		go func(ingester ring.InstanceDesc, samples []*streamTracker) {
 			// Use a background context to make sure all ingesters get samples even if we return early
 			localCtx, cancel := context.WithTimeout(context.Background(), d.clientCfg.RemoteTimeout)
@@ -390,6 +410,7 @@ func (d *Distributor) Push(ctx context.Context, req *logproto.PushRequest) (*log
 			if sp := opentracing.SpanFromContext(ctx); sp != nil {
 				localCtx = opentracing.ContextWithSpan(localCtx, sp)
 			}
+			// 将日志流样本数据下发给对应的 ingester 节点
 			d.sendStreams(localCtx, ingester, samples, &tracker)
 		}(ingesterDescs[ingester], streams)
 	}
@@ -567,11 +588,13 @@ func (d *Distributor) sendStreams(ctx context.Context, ingester ring.InstanceDes
 
 // TODO taken from Cortex, see if we can refactor out an usable interface.
 func (d *Distributor) sendStreamsErr(ctx context.Context, ingester ring.InstanceDesc, streams []*streamTracker) error {
+	// 根据 ingester 地址获取 client
 	c, err := d.pool.GetClientFor(ingester.Addr)
 	if err != nil {
 		return err
 	}
 
+	// 重新构造 PushRequest
 	req := &logproto.PushRequest{
 		Streams: make([]logproto.Stream, len(streams)),
 	}
@@ -579,6 +602,7 @@ func (d *Distributor) sendStreamsErr(ctx context.Context, ingester ring.Instance
 		req.Streams[i] = s.stream
 	}
 
+	// 通过 Ingester 客户端请求数据
 	_, err = c.(logproto.PusherClient).Push(ctx, req)
 	d.ingesterAppends.WithLabelValues(ingester.Addr).Inc()
 	if err != nil {

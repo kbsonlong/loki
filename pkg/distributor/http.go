@@ -25,6 +25,8 @@ func (d *Distributor) PushHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// 解析HTTP请求的函数,根据请求体大小和`Content-Encoding`选择不同的解析方法；
+	// 根据ContentType（内容类型）选择不同的解码方式
 	req, err := push.ParseRequest(logger, tenantID, r, d.tenantsRetention)
 	if err != nil {
 		if d.tenantConfigs.LogPushRequest(tenantID) {
@@ -49,6 +51,7 @@ func (d *Distributor) PushHandler(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	// 调用Push方法将请求推送到指定的Distributo
 	_, err = d.Push(r.Context(), req)
 	if err == nil {
 		if d.tenantConfigs.LogPushRequest(tenantID) {
